@@ -1,0 +1,35 @@
+cv_data <- raw_top10 %>%
+  group_by(Marathon, Year, Sex) %>%
+  summarise(
+    cv = (sd(Finish.Seconds) / mean(Finish.Seconds)) * 100,
+    .groups = "drop"
+  )
+
+ggplot(cv_data, aes(x = Year, y = cv, color = Marathon)) +
+  geom_line(linewidth = 1.2) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE,
+              color = "black", linetype = "dashed", linewidth = 0.8) +
+  facet_wrap(~Sex, labeller = labeller(Sex = c("M" = "Men", "F" = "Women"))) +
+  scale_x_continuous(
+    breaks = c(2000, 2010, 2020),
+    expand = c(0, 0),
+    limits = c(2000, 2026)
+  ) +
+  labs(
+    title = "Elite Field Competitiveness Over Time",
+    subtitle = "Coefficient of variation — lower = tighter, more competitive field",
+    x = NULL,
+    y = "CV (%)",
+    color = "Marathon"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(color = "gray40"),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+
+ggsave("elite_field_competitiveness.png", width = 12, height = 6, dpi = 300)
+
+
