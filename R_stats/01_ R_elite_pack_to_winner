@@ -1,0 +1,64 @@
+# Input 
+
+> gap_data <- raw_top10 %>%
++     group_by(Marathon, Year, Sex) %>%
++     summarise(
++         avg_seconds = mean(Finish.Seconds),
++         winning_seconds = min(Finish.Seconds),
++         gap_seconds = avg_seconds - winning_seconds,
++         .groups = "drop"
++     )
+> 
+> # Is the gap between winner and pack changing over time?
+> # Men
+> model_gap_men <- lm(gap_seconds ~ Year + Marathon, 
++                     data = subset(gap_data, Sex == "M"))
+> summary(model_gap_men)
+
+> # Women
+> model_gap_women <- lm(gap_seconds ~ Year + Marathon, 
++                       data = subset(gap_data, Sex == "F"))
+> summary(model_gap_women)
+
+# Output 
+## Men 
+
+Call:
+lm(formula = gap_seconds ~ Year, data = subset(gap_data, Sex == 
+    "M"))
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-164.55  -67.79  -16.13   51.94  351.28 
+
+Coefficients:
+             Estimate Std. Error t value Pr(>|t|)
+(Intercept)  461.4811  2103.3699   0.219    0.827
+Year          -0.1336     1.0450  -0.128    0.898
+
+Residual standard error: 94.11 on 142 degrees of freedom
+Multiple R-squared:  0.0001151,	Adjusted R-squared:  -0.006926 
+F-statistic: 0.01634 on 1 and 142 DF,  p-value: 0.8985
+
+## Women 
+
+Call:
+lm(formula = gap_seconds ~ Year, data = subset(gap_data, Sex == 
+    "F"))
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-314.90 -135.07  -29.67   72.73  893.36 
+
+Coefficients:
+             Estimate Std. Error t value Pr(>|t|)   
+(Intercept) 11413.822   4205.413   2.714  0.00747 **
+Year           -5.510      2.089  -2.637  0.00928 **
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 188.2 on 142 degrees of freedom
+Multiple R-squared:  0.0467,	Adjusted R-squared:  0.03999 
+F-statistic: 6.956 on 1 and 142 DF,  p-value: 0.009283
+
+
