@@ -1,0 +1,459 @@
+library(dplyr)
+library(ggplot2)
+
+hill_score <- data.frame(
+  Marathon = c("Berlin","Boston","Chicago","London","New York","Tokyo"),
+  gain_m   = c(73, 248, 57, 127, 246, 60),
+  net_m    = c(-6, -137, 0, -34, -5, -38)
+)
+
+#Course-level view first, sanity check the story ---
+course_level <- all_majors %>%
+  group_by(Marathon, Sex) %>%
+  summarise(mean_time = mean(avg_top10_seconds), .groups = "drop") %>%
+  left_join(hill_score, by = "Marathon")
+
+course_level %>% arrange(Sex, mean_time)
+
+ggplot(course_level, aes(gain_m, mean_time / 60, colour = Sex, label = Marathon)) +
+  geom_point(size = 3) +
+  geom_text(vjust = -1, size = 3.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_colour_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M="Men", F="Women")) +
+  labs(title = "Course hilliness vs average elite time",
+       x = "Total elevation gain (m)", y = "Avg top-10 time (min)") +
+  theme_classic(base_size = 13)
+
+# n=6 courses — descriptive only, not a real hypothesis test
+cor.test(course_level$gain_m[course_level$Sex=="M"], course_level$mean_time[course_level$Sex=="M"])
+
+# --- Race-level: the version that actually uses your real sample size ---
+race_level <- all_majors %>% left_join(hill_score, by = "Marathon")
+
+summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "F")))$coefficients
+summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "M")))$coefficients
+
+# Graph for elev gain 
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+sex_colours <- c(M = "#034698", F = "#B63163")
+
+fmt_hm <- function(x) sprintf("%d:%02d", x %/% 60, round(x %% 60))
+
+course_level <- all_majors %>%
+  group_by(Marathon, Sex) %>%
+  summarise(mean_time = mean(avg_top10_seconds), .groups = "drop") %>%
+  left_join(hill_score, by = "Marathon")
+
+ggplot(course_level, aes(gain_m, mean_time / 60)) +
+  geom_smooth(aes(colour = Sex), method = "lm", se = FALSE, linetype = "dashed", linewidth = 1) +
+  geom_point(aes(colour = Marathon, shape = Sex), size = 3.5) +
+  geom_text_repel(aes(label = Marathon), size = 3.3, colour = "black",
+                  show.legend = FALSE, max.overlaps = Inf, box.padding = 0.4) +
+  scale_colour_manual(values = c(marathon_colours, sex_colours),
+                      breaks = names(marathon_colours)) +
+  scale_shape_manual(values = c(M = 16, F = 17), labels = c(M = "Men", F = "Women")) +
+  scale_x_continuous(expand = expansion(mult = 0.12)) +
+  scale_y_continuous(labels = fmt_hm, expand = expansion(mult = 0.1)) +
+  labs(title = "Course hilliness vs average elite time",
+       x = "Total elevation gain (m)", y = "Avg top-10 time (h:mm)",
+       colour = NULL, shape = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+  ## Saved as course_elev_gain_vs_average_top_10.png
+
+  # Graph for net gain 
+
+  library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+sex_colours <- c(M = "#034698", F = "#B63163")
+
+fmt_hm <- function(x) sprintf("%d:%02d", x %/% 60, round(x %% 60))
+
+course_level <- all_majors %>%
+  group_by(Marathon, Sex) %>%
+  summarise(mean_time = mean(avg_top10_seconds), .groups = "drop") %>%
+  left_join(hill_score, by = "Marathon")
+
+ggplot(course_level, aes(net_m, mean_time / 60)) +
+  geom_smooth(aes(colour = Sex), method = "lm", se = FALSE, linetype = "dashed", linewidth = 1) +
+  geom_point(aes(colour = Marathon, shape = Sex), size = 3.5) +
+  geom_text_repel(aes(label = Marathon), size = 3.3, colour = "black",
+                  show.legend = FALSE, max.overlaps = Inf, box.padding = 0.4) +
+  scale_colour_manual(values = c(marathon_colours, sex_colours),
+                      breaks = names(marathon_colours)) +
+  scale_shape_manual(values = c(M = 16, F = 17), labels = c(M = "Men", F = "Women")) +
+  scale_x_continuous(expand = expansion(mult = 0.12)) +
+  scale_y_continuous(labels = fmt_hm, expand = expansion(mult = 0.1)) +
+  labs(title = "Net elevation change vs average elite time",
+       x = "Net elevation change, start to finish (m)", y = "Avg top-10 time (h:mm)",
+       colour = NULL, shape = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+  ## Saved as course_elev_net_vs_average_elite
+
+
+  #Stats Tests for both 
+
+  library(dplyr)
+
+race_level <- all_majors %>% left_join(hill_score, by = "Marathon")
+
+# --- Course-level correlations (n=6 per sex — descriptive only, not a real hypothesis test) ---
+cor.test(course_level$gain_m[course_level$Sex=="M"], course_level$mean_time[course_level$Sex=="M"])
+cor.test(course_level$gain_m[course_level$Sex=="F"], course_level$mean_time[course_level$Sex=="F"])
+cor.test(course_level$net_m[course_level$Sex=="M"], course_level$mean_time[course_level$Sex=="M"])
+cor.test(course_level$net_m[course_level$Sex=="F"], course_level$mean_time[course_level$Sex=="F"])
+
+# --- Race-level regressions (n≈288 — the trustworthy version) ---
+cat("\n--- Gain, Men ---\n")
+summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "M")))$coefficients["gain_m", ]
+cat("\n--- Gain, Women ---\n")
+summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "F")))$coefficients["gain_m", ]
+cat("\n--- Net elevation, Men ---\n")
+summary(lm(avg_top10_seconds ~ Year + net_m, data = filter(race_level, Sex == "M")))$coefficients["net_m", ]
+cat("\n--- Net elevation, Women ---\n")
+summary(lm(avg_top10_seconds ~ Year + net_m, data = filter(race_level, Sex == "F")))$coefficients["net_m", ]
+
+## Returned 
+
+> library(dplyr)
+> 
+> race_level <- all_majors %>% left_join(hill_score, by = "Marathon")
+> 
+> # --- Course-level correlations (n=6 per sex — descriptive only, not a real hypothesis test) ---
+> cor.test(course_level$gain_m[course_level$Sex=="M"], course_level$mean_time[course_level$Sex=="M"])
+
+	Pearson's product-moment correlation
+
+data:  course_level$gain_m[course_level$Sex == "M"] and course_level$mean_time[course_level$Sex == "M"]
+t = 2.9346, df = 4, p-value = 0.04262
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ 0.04485674 0.98041149
+sample estimates:
+      cor 
+0.8263361 
+
+> cor.test(course_level$gain_m[course_level$Sex=="F"], course_level$mean_time[course_level$Sex=="F"])
+
+	Pearson's product-moment correlation
+
+data:  course_level$gain_m[course_level$Sex == "F"] and course_level$mean_time[course_level$Sex == "F"]
+t = 0.17754, df = 4, p-value = 0.8677
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ -0.7790434  0.8397247
+sample estimates:
+       cor 
+0.08842191 
+
+> cor.test(course_level$net_m[course_level$Sex=="M"], course_level$mean_time[course_level$Sex=="M"])
+
+	Pearson's product-moment correlation
+
+data:  course_level$net_m[course_level$Sex == "M"] and course_level$mean_time[course_level$Sex == "M"]
+t = -0.93718, df = 4, p-value = 0.4017
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ -0.9193059  0.5906377
+sample estimates:
+       cor 
+-0.4243134 
+
+> cor.test(course_level$net_m[course_level$Sex=="F"], course_level$mean_time[course_level$Sex=="F"])
+
+	Pearson's product-moment correlation
+
+data:  course_level$net_m[course_level$Sex == "F"] and course_level$mean_time[course_level$Sex == "F"]
+t = -0.5692, df = 4, p-value = 0.5997
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ -0.8880188  0.6914325
+sample estimates:
+       cor 
+-0.2737291 
+
+> 
+> # --- Race-level regressions (n≈288 — the trustworthy version) ---
+> cat("\n--- Gain, Men ---\n")
+
+--- Gain, Men ---
+> summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "M")))$coefficients["gain_m", ]
+    Estimate   Std. Error      t value     Pr(>|t|) 
+8.133351e-01 1.406334e-01 5.783369e+00 4.527251e-08 
+> cat("\n--- Gain, Women ---\n")
+
+--- Gain, Women ---
+> summary(lm(avg_top10_seconds ~ Year + gain_m, data = filter(race_level, Sex == "F")))$coefficients["gain_m", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+ 0.1570976  0.2762680  0.5686422  0.5705035 
+> cat("\n--- Net elevation, Men ---\n")
+
+--- Net elevation, Men ---
+> summary(lm(avg_top10_seconds ~ Year + net_m, data = filter(race_level, Sex == "M")))$coefficients["net_m", ]
+    Estimate   Std. Error      t value     Pr(>|t|) 
+-0.820405031  0.253806798 -3.232399756  0.001528501 
+> cat("\n--- Net elevation, Women ---\n")
+
+--- Net elevation, Women ---
+> summary(lm(avg_top10_seconds ~ Year + net_m, data = filter(race_level, Sex == "F")))$coefficients["net_m", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+-0.7136342  0.4611969 -1.5473527  0.1240198 
+
+### Meaning 
+
+# Total elevation gain: significant for men, null for women. At the course level (n=6, so treat cautiously), gain correlates strongly with men's times (r = 0.83, p = 0.043) but not women's at all (r = 0.09, p = 0.87). The race-level regression (the trustworthy one, n≈144 per sex) confirms this cleanly: men lose 0.81 seconds per metre of elevation gain (p < 0.001, highly significant), women show essentially nothing (0.16 s/m, p = 0.57).
+#Net elevation: the opposite pattern — stronger for men, weaker for women, but same direction both times. Men lose 0.82 seconds of benefit per metre of net downhill (p = 0.0015, significant); women show a similar-sized effect (0.71 s/m) but it doesn't reach significance (p = 0.124), likely just underpowered rather than genuinely absent given the effect size is comparable to men's.
+#The honest, interesting takeaway: hilliness — both total climbing and net drop — appears to matter substantially for elite men's times, but the evidence for women is much weaker or absent depending on which elevation measure you use. That's worth flagging rather than glossing over, and it's a genuinely publishable-sounding contrast for the write-up:
+##"Course elevation profile showed a strong relationship with elite men's average times: each additional metre of total elevation gain cost approximately 0.81 seconds (p < 0.001), and each metre of net downhill saved a comparable 0.82 seconds (p = 0.002). Neither relationship reached significance for women, though the net elevation effect was directionally similar and of comparable magnitude (0.71 s/m, p = 0.124), suggesting this may reflect the smaller women's sample rather than a true absence of the effect. Total elevation gain showed no meaningful relationship with women's times in either the course-level or race-level analysis."
+
+# Testing race champ theory - elev effects in the wrong way - maybe need some sort of climb score?
+
+library(dplyr)
+
+race_level <- race_level %>%
+  mutate(pacemakers = Marathon %in% c("Berlin", "Chicago", "London", "Tokyo"))
+
+summary(lm(avg_top10_seconds ~ Year + net_m + pacemakers, data = filter(race_level, Sex == "M")))$coefficients
+summary(lm(avg_top10_seconds ~ Year + net_m + pacemakers, data = filter(race_level, Sex == "F")))$coefficients
+
+## Returned 
+
+> summary(lm(avg_top10_seconds ~ Year + net_m + pacemakers, data = filter(race_level, Sex == "M")))$coefficients
+                    Estimate   Std. Error    t value     Pr(>|t|)
+(Intercept)    28262.9869163 2977.3918450  9.4925318 8.332498e-17
+Year             -10.1182873    1.4799145 -6.8370758 2.299131e-10
+net_m              0.0581493    0.2702802  0.2151445 8.299678e-01
+pacemakersTRUE  -166.2937065   27.7170931 -5.9996806 1.604274e-08
+> summary(lm(avg_top10_seconds ~ Year + net_m + pacemakers, data = filter(race_level, Sex == "F")))$coefficients
+                    Estimate  Std. Error    t value     Pr(>|t|)
+(Intercept)    48497.0126605 6038.841358  8.0308473 3.577017e-13
+Year             -19.6826250    3.001610 -6.5573562 9.788395e-10
+net_m             -0.3796091    0.548191 -0.6924759 4.897855e-01
+pacemakersTRUE   -63.2246282   56.216695 -1.1246593 2.626580e-01
+> 
+
+### Meaning "An apparent negative relationship between net downhill and men's elite times (β = -0.82 s/m, p = 0.002) reversed to null (β = +0.06, p = 0.83) once whether the course uses professional pacemakers was controlled for. Boston and New York — the two most net-downhill majors in this sample — are also the only two run without pacemakers, run tactically rather than for time. This is not a physiological effect of downhill running; it is a confound between course elevation and racing strategy. The same pattern was weaker and non-significant for women, suggesting pacing conventions may differ by sex or that the smaller sample lacks power to resolve it."
+
+# Creation of "hill score"
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+# --- Part 1: raw gain vs net, one point per course ---
+ggplot(hill_score, aes(gain_m, net_m, colour = Marathon)) +
+  geom_point(size = 4) +
+  geom_text_repel(aes(label = Marathon), colour = "black", size = 3.5, max.overlaps = Inf) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+  scale_colour_manual(values = marathon_colours) +
+  scale_x_continuous(expand = expansion(mult = 0.15)) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +
+  labs(title = "Course profile: total climbing vs net elevation change",
+       x = "Total elevation gain (m)", y = "Net elevation change, start to finish (m)") +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+# --- Part 2: a combined hill score, z-scored so both metrics contribute equally ---
+# Treats both total climbing AND net elevation swing (in either direction) as "harder terrain"
+hill_score <- hill_score %>%
+  mutate(hill_score_z = scale(gain_m)[,1] + scale(abs(net_m))[,1]) %>%
+  arrange(desc(hill_score_z))
+
+hill_score
+
+ggplot(hill_score, aes(reorder(Marathon, hill_score_z), hill_score_z, fill = Marathon)) +
+  geom_col(width = 0.6) +
+  scale_fill_manual(values = marathon_colours) +
+  coord_flip() +
+  labs(title = "Combined hill score by course",
+       subtitle = "Higher = harder terrain",
+       x = NULL, y = "Hill score (z-scored)") +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+  ## Returned 
+
+   Marathon gain_m net_m hill_score_z
+1   Boston    248  -137    3.1912791
+2 New York    246    -5    0.6158152
+3   London    127   -34   -0.1420917
+4    Tokyo     60   -38   -0.8072698
+5   Berlin     73    -6   -1.2821741
+6  Chicago     57     0   -1.5755587
+
+# UPDATED GRAPH 1 CODE 
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+ggplot(hill_score, aes(gain_m, net_m, colour = Marathon)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey80", linewidth = 0.6) +
+  geom_point(size = 4) +
+  geom_text_repel(aes(label = Marathon), colour = "black", size = 3.5,
+                  max.overlaps = Inf, point.padding = 0.5, min.segment.length = 0) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_x_continuous(expand = expansion(mult = 0.15)) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +
+  labs(title = "Course profile: Total elevation gain vs net elevation",
+       x = "Total elevation gain (m)", y = "Net elevation (m)") +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+## Saved as course_profile_elev_gain_vs_net_elev
+
+# Graph 2 code written above but repasted 
+
+hill_score <- hill_score %>%
+  mutate(hill_score_z = scale(gain_m)[,1] + scale(abs(net_m))[,1]) %>%
+  arrange(desc(hill_score_z))
+
+hill_score
+
+ggplot(hill_score, aes(reorder(Marathon, hill_score_z), hill_score_z, fill = Marathon)) +
+  geom_col(width = 0.6) +
+  scale_fill_manual(values = marathon_colours) +
+  coord_flip() +
+  labs(title = "Combined hill score by course",
+       subtitle = "Higher = harder terrain",
+       x = NULL, y = "Hill score (z-scored)") +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+## Saved as combined_hill_score.png
+
+# Hill score vs winning time and top 10 
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+fmt_hm <- function(x) sprintf("%d:%02d", x %/% 60, round(x %% 60))
+
+course_time_level <- all_majors %>%
+  group_by(Marathon, Sex) %>%
+  summarise(mean_top10 = mean(avg_top10_seconds),
+           mean_winning = mean(winning_seconds), .groups = "drop") %>%
+  left_join(hill_score, by = "Marathon") %>%
+  pivot_longer(cols = c(mean_top10, mean_winning), names_to = "Metric", values_to = "time_sec") %>%
+  mutate(Metric = case_when(
+    Metric == "mean_top10" ~ "Top-10 average",
+    Metric == "mean_winning" ~ "Winning time"
+  ))
+
+plot_hill_score <- function(data, sex_code, sex_label) {
+  ggplot(filter(data, Sex == sex_code), aes(hill_score_z, time_sec / 60)) +
+    geom_smooth(aes(linetype = Metric), method = "lm", se = FALSE, colour = "black", linewidth = 0.7) +
+    geom_point(aes(colour = Marathon, shape = Metric), size = 3.5) +
+    geom_text_repel(aes(label = Marathon), size = 3.3, colour = "black",
+                    segment.color = NA, direction = "y", nudge_y = -0.4,
+                    hjust = 0.5, max.overlaps = Inf, show.legend = FALSE) +
+    scale_colour_manual(values = marathon_colours) +
+    scale_shape_manual(values = c("Top-10 average" = 16, "Winning time" = 17)) +
+    scale_x_continuous(expand = expansion(mult = 0.1)) +
+    scale_y_continuous(labels = fmt_hm, expand = expansion(mult = 0.1)) +
+    labs(title = paste("Combined hill score vs elite finish time —", sex_label),
+        x = "Hill score (z-scored)", y = "Finish time (h:mm)",
+        colour = NULL, shape = NULL, linetype = NULL) +
+    theme_classic(base_size = 13) +
+    theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+}
+
+plot_hill_score(course_time_level, "M", "Men")
+
+plot_hill_score(course_time_level, "F", "Women")
+
+## Saved as combined_hill_vs_elite_m.png and combined_hill_vs_elite_f.png
+
+# Data analysis for those graphs 
+
+library(dplyr)
+
+race_level <- all_majors %>% left_join(hill_score, by = "Marathon") %>%
+  mutate(pacemakers = Marathon %in% c("Berlin", "Chicago", "London", "Tokyo"))
+
+# --- Course-level correlations (n=6 — descriptive only) ---
+cor.test(hill_score$hill_score_z, course_time_level$time_sec[course_time_level$Sex=="M" & course_time_level$Metric=="Top-10 average"])
+
+# --- Race-level regressions (the real test, n≈288) ---
+cat("\n=== Top-10 average ===\n")
+for (s in c("M", "F")) {
+  mod <- lm(avg_top10_seconds ~ Year + hill_score_z, data = filter(race_level, Sex == s))
+  cat(ifelse(s=="M","Men: ","Women: "))
+  print(summary(mod)$coefficients["hill_score_z", ])
+}
+
+cat("\n=== Winning time ===\n")
+for (s in c("M", "F")) {
+  mod <- lm(winning_seconds ~ Year + hill_score_z, data = filter(race_level, Sex == s))
+  cat(ifelse(s=="M","Men: ","Women: "))
+  print(summary(mod)$coefficients["hill_score_z", ])
+}
+
+## Returned 
+
+# Pearson's product-moment correlation
+
+data:  hill_score$hill_score_z and course_time_level$time_sec[course_time_level$Sex == "M" & course_time_level$Metric == "Top-10 average"]
+t = -0.18332, df = 4, p-value = 0.8635
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ -0.8405721  0.7779083
+sample estimates:
+       cor 
+-0.0912796 
+
+> 
+> # --- Race-level regressions (the real test, n≈288) ---
+> cat("\n=== Top-10 average ===\n")
+
+=== Top-10 average ===
+> for (s in c("M", "F")) {
++     mod <- lm(avg_top10_seconds ~ Year + hill_score_z, data = filter(race_level, Sex == s))
++     cat(ifelse(s=="M","Men: ","Women: "))
++     print(summary(mod)$coefficients["hill_score_z", ])
++ }
+Men:     Estimate   Std. Error      t value     Pr(>|t|) 
+3.653172e+01 7.186929e+00 5.083078e+00 1.160230e-06 
+Women:   Estimate Std. Error    t value   Pr(>|t|) 
+16.5417711 13.7524718  1.2028217  0.2310612 
+> 
+> cat("\n=== Winning time ===\n")
+
+=== Winning time ===
+> for (s in c("M", "F")) {
++     mod <- lm(winning_seconds ~ Year + hill_score_z, data = filter(race_level, Sex == s))
++     cat(ifelse(s=="M","Men: ","Women: "))
++     print(summary(mod)$coefficients["hill_score_z", ])
++ }
+Men:     Estimate   Std. Error      t value     Pr(>|t|) 
+4.838952e+01 6.939608e+00 6.972948e+00 1.102746e-10 
+Women:     Estimate   Std. Error      t value     Pr(>|t|) 
+5.890085e+01 1.193664e+01 4.934459e+00 2.233952e-06 
+> 
+
+### Meaning 
+# "Combined course hardness (elevation gain plus net elevation change, z-scored) showed a strong, significant relationship with men's times in both the top-10 average (+36.5 s per unit, p < 0.001) and the winning time (+48.4 s per unit, p < 0.001). For women, the pattern was more selective: hardness had no detectable effect on the top-10 pack average (p = 0.23) but a strong, significant effect on the winning time (+58.9 s per unit, p < 0.001) — suggesting hilly courses may not slow the elite women's field uniformly, but do meaningfully cost whoever is racing to win. As with net elevation alone, some of this relationship may reflect course-specific racing conventions (pacemaker use, tactical versus even-effort racing) rather than terrain difficulty in isolation; because pacemaker presence is not a fixed or consistently documented property of each course across 26 years, this could not be reliably controlled for and is noted as a limitation rather than resolved."

@@ -1,0 +1,243 @@
+### Check wind speed averages
+
+library(dplyr)
+
+# Coverage by course
+wx %>%
+  filter(Sex == "M") %>%   # wind doesn't vary by sex, so one sex is enough
+  group_by(Marathon) %>%
+  summarise(n_races = n(), has_wind = sum(!is.na(wind_ms)), missing = sum(is.na(wind_ms)))
+
+# Sanity range check — catches unit/join errors, not just missingness
+wx %>%
+  filter(!is.na(wind_ms)) %>%
+  group_by(Marathon) %>%
+  summarise(min_wind = min(wind_ms), max_wind = max(wind_ms), mean_wind = round(mean(wind_ms), 1))
+
+
+# Returned
+> wx_wind <- wx %>% filter(!is.na(wind_ms)) # nolint
+> 
+> summary(lm(avg_top10_seconds ~ Year + Marathon + wind_ms, data = filter(wx_wind, Sex == "M")))$coefficients["wind_ms", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+9.59549264 5.07802480 1.88961122 0.06110774 
+> summary(lm(avg_top10_seconds ~ Year + Marathon + wind_ms, data = filter(wx_wind, Sex == "F")))$coefficients["wind_ms", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+ 15.702677   9.944031   1.579106   0.116819 
+
+ ##  Marathon n_races has_wind missing
+  <chr>      <int>    <int>   <int>
+1 Berlin        25       19       6
+2 Boston        26       25       1
+3 Chicago       25       24       1
+4 London        27       26       1
+5 New York      24       24       0
+6 Tokyo         17       16       1
+
+## More return
+  Marathon min_wind max_wind mean_wind
+  <chr>       <dbl>    <dbl>     <dbl>
+1 Berlin      1.25      6.84       3.7
+2 Boston      1.97     14.3        4.8
+3 Chicago     0.45      7.2        3.4
+4 London      0.507     9.85       4.5
+5 New York    0.47     10.9        4.1
+6 Tokyo       3.03      8.77       5.8
+
+### Suggesting 
+
+# "Wind speed showed a positive association with slower average top-10 times for men that approached but did not reach conventional significance (p = 0.061); no significant effect was found for women (p = 0.117). Given wind was measured as a single-point average over a several-hour window without direction relative to the course, this is likely an underpowered test of a real effect rather than evidence of no effect — headwind and tailwind conditions were not distinguished in this dataset."
+
+#Graph 
+
+library(dplyr)
+library(ggplot2)
+
+per_course_wind <- race_weather %>% filter(!is.na(wind_ms))
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+ggplot(per_course_wind, aes(Year, wind_ms, colour = Marathon)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.8) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_x_continuous(expand = expansion(mult = 0.02)) +
+  scale_y_continuous(expand = expansion(mult = 0.05)) +
+  labs(title = "Race-day wind speed by marathon, 2000–2026",
+       x = NULL, y = "Wind speed (m/s)",
+       colour = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+# saved as 
+
+
+# Wind Speed x Time Graph
+library(dplyr)
+library(ggplot2)
+
+wx_wind <- wx %>% filter(!is.na(wind_ms))
+
+wx_wind <- wx_wind %>%
+  group_by(Sex) %>%
+  mutate(wind_ms_centered = wind_ms - mean(wind_ms, na.rm = TRUE)) %>%
+  ungroup()
+
+wind_m <- wx_wind %>% filter(Sex == "M")
+wind_f <- wx_wind %>% filter(Sex == "F")
+
+gmod_wind_m <- lm(avg_top10_seconds ~ Year + Marathon + wind_ms_centered, data = wind_m)
+gmod_wind_f <- lm(avg_top10_seconds ~ Year + Marathon + wind_ms_centered, data = wind_f)
+
+wind_range <- function(d) seq(min(d$wind_ms_centered, na.rm = TRUE), max(d$wind_ms_centered, na.rm = TRUE), length.out = 100)
+
+pred_wind_m <- data.frame(wind_ms_centered = wind_range(wind_m), Year = mean(wind_m$Year), Marathon = "Berlin")
+pred_wind_m <- cbind(pred_wind_m, predict(gmod_wind_m, newdata = pred_wind_m, se.fit = TRUE)[1:2]) %>%
+  mutate(Sex = "M", lwr = fit - 1.96*se.fit, upr = fit + 1.96*se.fit)
+
+pred_wind_f <- data.frame(wind_ms_centered = wind_range(wind_f), Year = mean(wind_f$Year), Marathon = "Berlin")
+pred_wind_f <- cbind(pred_wind_f, predict(gmod_wind_f, newdata = pred_wind_f, se.fit = TRUE)[1:2]) %>%
+  mutate(Sex = "F", lwr = fit - 1.96*se.fit, upr = fit + 1.96*se.fit)
+
+pred_wind_all <- bind_rows(pred_wind_m, pred_wind_f)
+
+wind_m$adj_time <- residuals(lm(avg_top10_seconds ~ Year + Marathon, data = wind_m)) + mean(wind_m$avg_top10_seconds)
+wind_f$adj_time <- residuals(lm(avg_top10_seconds ~ Year + Marathon, data = wind_f)) + mean(wind_f$avg_top10_seconds)
+
+ggplot() +
+  geom_point(data = wind_m, aes(wind_ms_centered, adj_time/60), colour = "#034698", alpha = 0.5) +
+  geom_point(data = wind_f, aes(wind_ms_centered, adj_time/60), colour = "#B63163", alpha = 0.5) +
+  geom_ribbon(data = pred_wind_all, aes(wind_ms_centered, ymin = lwr/60, ymax = upr/60, fill = Sex), alpha = 0.15) +
+  geom_line(data = pred_wind_all, aes(wind_ms_centered, fit/60, colour = Sex), linewidth = 1) +
+  scale_colour_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M="Men", F="Women")) +
+  scale_fill_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M="Men", F="Women")) +
+  scale_x_continuous(expand = expansion(mult = 0.02)) +
+  scale_y_continuous(expand = expansion(mult = 0.05)) +
+  labs(title = "Race-day wind speed vs elite time (course & year adjusted)",
+       subtitle = "Men: p = 0.061 | Women: p = 0.117",
+       x = "Wind speed relative to course average (m/s)", y = "Adjusted avg top-10 time (min)",
+       colour = NULL, fill = NULL) +
+  theme_classic(base_size = 13) + theme(legend.position = "bottom")
+
+## Saved as 
+## Note that WS does not indicate direction, simply total different for out and back courses 
+
+# Unadjusted version 
+
+> library(dplyr)
+> library(ggplot2)
+> 
+> wx_wind <- wx %>% filter(!is.na(wind_ms))
+> 
+> ggplot(wx_wind, aes(wind_ms, avg_top10_seconds / 60, colour = Sex)) +
++     geom_point(alpha = 0.5, size = 2) +
++     geom_smooth(method = "lm", se = TRUE, aes(fill = Sex), alpha = 0.15) +
++     scale_colour_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M = "Men", F = "Women")) +
++     scale_fill_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M = "Men", F = "Women")) +
++     scale_x_continuous(expand = expansion(mult = 0.02)) +
++     scale_y_continuous(expand = expansion(mult = 0.05)) +
++     labs(title = "Race-day wind speed vs elite finish time",
++          subtitle = "Raw values, no adjustment for course or year",
++          x = "Wind speed (m/s)", y = "Avg top-10 time (min)",
++          colour = NULL, fill = NULL) +
++     theme_classic(base_size = 13) +
++     theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+`geom_smooth()` using formula = 'y ~ x'
+> 
+## Good for overall trend (use first) and then say when adjusted we see XYZ 
+
+# Stats testing for simple
+
+library(dplyr)
+
+wx_wind <- wx %>% filter(!is.na(wind_ms))
+
+# Correlation, each sex separately
+cor.test(wx_wind$wind_ms[wx_wind$Sex == "M"], wx_wind$avg_top10_seconds[wx_wind$Sex == "M"])
+cor.test(wx_wind$wind_ms[wx_wind$Sex == "F"], wx_wind$avg_top10_seconds[wx_wind$Sex == "F"])
+
+# Simple regression, no controls — matches the geom_smooth lines in the chart
+summary(lm(avg_top10_seconds ~ wind_ms, data = filter(wx_wind, Sex == "M")))$coefficients
+summary(lm(avg_top10_seconds ~ wind_ms, data = filter(wx_wind, Sex == "F")))$coefficients
+
+
+## Results 
+
+> # Simple regression, no controls — matches the geom_smooth lines in the chart
+Pearson's product-moment correlation
+
+data:  wx_wind$wind_ms[wx_wind$Sex == "M"] and wx_wind$avg_top10_seconds[wx_wind$Sex == "M"]
+t = 1.8071, df = 132, p-value = 0.07302
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ -0.01459427  0.31662393
+sample estimates:
+      cor 
+0.1553787 
+
+> cor.test(wx_wind$wind_ms[wx_wind$Sex == "F"], wx_wind$avg_top10_seconds[wx_wind$Sex == "F"])
+
+	Pearson's product-moment correlation
+
+data:  wx_wind$wind_ms[wx_wind$Sex == "F"] and wx_wind$avg_top10_seconds[wx_wind$Sex == "F"]
+t = 2.2493, df = 132, p-value = 0.02615
+alternative hypothesis: true correlation is not equal to 0
+95 percent confidence interval:
+ 0.02330186 0.35030535
+sample estimates:
+     cor 
+0.192131 
+
+> 
+> # Simple regression, no controls — matches the geom_smooth lines in the chart
+> summary(lm(avg_top10_seconds ~ wind_ms, data = filter(wx_wind, Sex == "M")))$coefficients
+              Estimate Std. Error    t value      Pr(>|t|)
+(Intercept) 7747.64633  30.688283 252.462686 4.465004e-179
+wind_ms       11.24576   6.223052   1.807113  7.302224e-02
+> summary(lm(avg_top10_seconds ~ wind_ms, data = filter(wx_wind, Sex == "F")))$coefficients
+              Estimate Std. Error    t value      Pr(>|t|)
+(Intercept) 8747.26531   55.91195 156.447148 9.753516e-152
+wind_ms       25.50278   11.33798   2.249324  2.614820e-02
+> 
+
+### meaning 
+
+## "Race-day wind speed showed a significant unadjusted correlation with women's finish times (r = 0.19, p = 0.026), but this association did not survive controlling for course and year (p = 0.117), indicating the raw correlation substantially reflects which courses tend to be both windier and structurally slower — most notably Boston — rather than a direct effect of wind on performance. Men showed a similar pattern in both specifications, with the effect remaining borderline (p ≈ 0.06–0.07) either way."
+
+# Robustness check
+
+library(sandwich)
+library(lmtest)
+
+wind_mod_m <- lm(avg_top10_seconds ~ Year + Marathon + wind_ms_centered, data = wind_m)
+wind_mod_f <- lm(avg_top10_seconds ~ Year + Marathon + wind_ms_centered, data = wind_f)
+
+# Clustered by course — same approach used on your other headline findings
+coeftest(wind_mod_m, vcov = vcovCL, cluster = ~Marathon)["wind_ms_centered", ]
+coeftest(wind_mod_f, vcov = vcovCL, cluster = ~Marathon)["wind_ms_centered", ]
+
+# Newey-West as a second check, since these are also mildly time-ordered series
+coeftest(wind_mod_m, vcov = NeweyWest(wind_mod_m))["wind_ms_centered", ]
+coeftest(wind_mod_f, vcov = NeweyWest(wind_mod_f))["wind_ms_centered", ]
+
+## Results 
+
+> # Clustered by course — same approach used on your other headline findings
+> coeftest(wind_mod_m, vcov = vcovCL, cluster = ~Marathon)["wind_ms_centered", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+9.59549264 5.47400321 1.75292054 0.08204782 
+> coeftest(wind_mod_f, vcov = vcovCL, cluster = ~Marathon)["wind_ms_centered", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+15.7026775 11.4513054  1.3712565  0.1727322 
+> 
+> # Newey-West as a second check, since these are also mildly time-ordered series
+> coeftest(wind_mod_m, vcov = NeweyWest(wind_mod_m))["wind_ms_centered", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+ 9.5954926  6.9813576  1.3744451  0.1717432 
+> coeftest(wind_mod_f, vcov = NeweyWest(wind_mod_f))["wind_ms_centered", ]
+  Estimate Std. Error    t value   Pr(>|t|) 
+15.7026775 12.3685582  1.2695641  0.2065798 
+
+### Meaning
+### "Wind speed's association with slower elite times was directionally consistent across specifications (OLS, course-clustered, and Newey-West standard errors) for both sexes, but did not reach conventional significance in any version (p ranging 0.06–0.21). Combined with the confounding demonstrated in the unadjusted analysis — where wind's raw correlation with women's times was significant but attributable to course-level confounding with Boston — this suggests wind speed, as measured here (a single-point average without headwind/tailwind direction), is at most a modest factor in elite marathon performance, and this dataset lacks the power or precision to detect it conclusively."

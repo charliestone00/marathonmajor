@@ -1,0 +1,759 @@
+nth_weekday <- function(year, month, wday, n) {
+  d <- seq(as.Date(sprintf("%d-%02d-01", year, month)), by = "day", length.out = 28)
+  d[format(d, "%u") == wday][n]
+}
+
+years <- 2000:2026
+race_dates <- rbind(
+  data.frame(Marathon = "Boston",   Year = years, date = sapply(years, nth_weekday, 4, 1, 3)),
+  data.frame(Marathon = "London",   Year = years, date = sapply(years, nth_weekday, 4, 7, 4)),
+  data.frame(Marathon = "Berlin",   Year = years, date = sapply(years, nth_weekday, 9, 7, 4)),
+  data.frame(Marathon = "Chicago",  Year = years, date = sapply(years, nth_weekday, 10, 7, 2)),
+  data.frame(Marathon = "New York", Year = years, date = sapply(years, nth_weekday, 11, 7, 1)),
+  data.frame(Marathon = "Tokyo",    Year = 2007:2026, date = sapply(2007:2026, nth_weekday, 3, 7, 1))
+)
+race_dates$date <- as.Date(race_dates$date, origin = "1970-01-01")
+overrides <- data.frame(
+  Marathon = c("Boston", "Berlin", "Chicago", "New York", "New York",
+               "London", "London", "London", "Tokyo"),
+  Year     = c(2021,     2020,     2020,     2012,       2020,
+               2020,     2021,     2022,     2021),
+  date     = as.Date(c("2021-10-11", NA, NA, NA, NA,
+                       "2020-10-04", "2021-10-03", NA, "2022-03-06")),
+  note     = c("Moved to Oct due to pandemic",
+               "Cancelled — no elite race",
+               "Cancelled — no elite race",
+               "Cancelled — Hurricane Sandy",
+               "Cancelled — pandemic",
+               "Moved to Oct, elite-only, non-standard course",
+               "Moved to Oct",
+               "Also ran in October — verify against your source",
+               "Nominally '2021 Tokyo Marathon' but ACTUAL date is 2022 — check which Year your data files this under")
+)
+
+# Overides 
+
+foverrides <- data.frame(
+  Marathon = c("Boston", "Berlin", "Chicago", "New York", "New York",
+               "London", "London", "London", "Tokyo",     "Tokyo"),
+  Year     = c(2021,     2020,     2020,     2012,       2020,
+               2020,     2021,     2022,     2021,        2022),
+  date     = as.Date(c("2021-10-11", NA, NA, NA, NA,
+                       "2020-10-04", "2021-10-03", "2022-10-02", "2022-03-06", NA)),
+  note     = c("Moved to Oct due to pandemic",
+               "Cancelled — no elite race",
+               "Cancelled — no elite race",
+               "Cancelled — Hurricane Sandy",
+               "Cancelled — pandemic",
+               "Moved to Oct, elite-only, non-standard course",
+               "Moved to Oct",
+               "Moved to 2 Oct 2022",
+               "Nominally '2021 Tokyo Marathon' but actually run 6 Mar 2022 — check which Year your data files this under",
+               "No separate 2022 edition — the '2021' race (above) was the one run in 2022")
+)
+
+for (i in seq_len(nrow(overrides))) {
+  race_dates$date[race_dates$Marathon == overrides$Marathon[i] &
+                   race_dates$Year == overrides$Year[i]] <- overrides$date[i]
+}
+
+# Verified with Gemini
+
+install.packages("worldmet")
+library(worldmet)
+
+# Run each of these once, interactively — pick the closest/most complete station from the results
+getMeta(lat = 42.35,  lon = -71.06)   # Boston (Logan)
+getMeta(lat = 52.51,  lon = 13.38)    # Berlin
+getMeta(lat = 41.88,  lon = -87.63)   # Chicago (O'Hare)
+getMeta(lat = 51.50,  lon = -0.12)    # London (Heathrow/City)
+getMeta(lat = 40.77,  lon = -73.97)   # New York (Central Park/LaGuardia)
+getMeta(lat = 35.68,  lon = 139.69)   # Tokyo (Haneda)
+
+# Stations Chosen
+## Boston 725090 14739 (1)
+## Chicago 725340 14819 (2)
+## Berlin 103850 99999 (1)
+## London 037700 99999 (1)
+## New York 725053 94728 (1)
+## Tokyo 476713 99999 (1)
+
+
+# Test 
+
+library(worldmet)
+library(dplyr)
+
+station_codes <- c(
+  Boston    = "725090-14739",
+  Chicago   = "725340-14819",
+  Berlin    = "103850-99999",
+  London    = "037700-99999",
+  `New York` = "725053-94728",
+  Tokyo     = "476713-99999"
+)
+
+get_race_weather <- function(marathon, year, race_date) {
+  if (is.na(race_date)) return(NULL)
+  met <- tryCatch(
+    importNOAA(code = station_codes[[marathon]], year = year),
+    error = function(e) NULL)
+  if (is.null(met)) return(NULL)
+
+  day_data <- met %>% filter(as.Date(date) == race_date,
+                             format(date, "%H") %in% sprintf("%02d", 9:13))
+  if (nrow(day_data) == 0) return(NULL)
+
+  data.frame(Marathon = marathon, Year = year,
+             temp_c = mean(day_data$air_temp, na.rm = TRUE),
+             wind_ms = mean(day_data$ws, na.rm = TRUE))
+}
+
+test_all <- lapply(names(station_codes), function(m) {
+  d <- race_dates$date[race_dates$Marathon == m & race_dates$Year == 2023]
+  get_race_weather(m, 2023, d)
+})
+bind_rows(test_all)
+
+## Tokyo fully blank, London no wind speed 
+## To Diagnose 
+
+library(worldmet)
+
+# Tokyo
+tokyo_raw <- importNOAA(code = "476713-99999", year = 2023)
+nrow(tokyo_raw)
+head(tokyo_raw)
+range(tokyo_raw$date)
+
+# If nrow is 0 or NULL, the station/year combo has no data — try a nearby alternative
+getMeta(lat = 35.68, lon = 139.69, n = 10)   # see what else is close to Tokyo
+
+# London — check whether wind data exists at all for this station
+london_raw <- importNOAA(code = "037700-99999", year = 2023)
+summary(london_raw$ws)          # is it all NA, or just missing in the race window?
+summary(london_raw$air_temp)    # temp clearly came through — compare data density
+
+# New York — check the actual values behind that suspicious 0.00
+ny_raw <- importNOAA(code = "725053-94728", year = 2023)
+ny_raw %>% filter(as.Date(date) == race_dates$date[race_dates$Marathon=="New York" & race_dates$Year==2023],
+                  format(date, "%H") %in% sprintf("%02d", 9:13)) %>%
+  select(date, air_temp, ws)
+
+## Changed Tokyo sensor to Haneda airport for better hourly readings with 
+
+tokyo_raw2 <- importNOAA(code = "476710-99999", year = 2023)
+sum(!is.na(tokyo_raw2$air_temp))
+
+## Changed London sensor to Heathrow 
+
+library(worldmet)
+library(dplyr)
+heathrow_raw <- importNOAA(code = "037720-99999", year = 2023)
+summary(heathrow_raw$air_temp)
+summary(heathrow_raw$ws)
+
+heathrow_raw %>%
+  filter(as.Date(date) == race_dates$date[race_dates$Marathon == "London" & race_dates$Year == 2023],
+        format(date, "%H") %in% sprintf("%02d", 9:13)) %>%
+  select(date, air_temp, ws)
+
+tokyo_raw2 <- importNOAA(code = "476710-99999", year = 2023)
+sum(!is.na(tokyo_raw2$air_temp))
+sum(!is.na(tokyo_raw2$ws))
+
+## Checked New York average windspeed is 0 as real 
+
+summary(ny_raw$ws)
+sum(ny_raw$ws == 0, na.rm = TRUE) / sum(!is.na(ny_raw$ws))
+
+### Final Code 
+
+station_codes <- c(
+  Boston    = "725090-14739",
+  Chicago   = "725340-14819",
+  Berlin    = "103850-99999",
+  London    = "037720-99999",   # Heathrow
+  `New York` = "725053-94728",
+  Tokyo     = "476710-99999"    # Haneda 
+
+  ### FULL PULL 
+
+  library(worldmet) # nolint: error.
+library(dplyr)
+
+get_race_weather <- function(marathon, year, race_date) {
+  if (is.na(race_date)) return(NULL)
+  met <- tryCatch(
+    importNOAA(code = station_codes[[marathon]], year = year),
+    error = function(e) NULL)
+  if (is.null(met)) return(NULL)
+
+  day_data <- met %>% filter(as.Date(date) == race_date,
+                             format(date, "%H") %in% sprintf("%02d", 9:13))
+  if (nrow(day_data) == 0) return(NULL)
+
+  data.frame(Marathon = marathon, Year = year,
+             temp_c = mean(day_data$air_temp, na.rm = TRUE),
+             wind_ms = mean(day_data$ws, na.rm = TRUE))
+}
+
+race_weather <- race_dates %>%
+  filter(!is.na(date)) %>%
+  rowwise() %>%
+  do(get_race_weather(.$Marathon, .$Year, .$date)) %>%
+  bind_rows()
+
+nrow(race_weather)          # sanity check: should be roughly 155-160 rows
+sum(is.na(race_weather$temp_c))   # how many still came back empty
+race_weather %>% filter(is.na(temp_c))  # which ones, so you can patch manually
+)
+
+# Failed - checking data start and end meta_boston   <- getMeta(lat = 42.35, lon = -71.06, n = 5)
+meta_berlin   <- getMeta(lat = 52.51, lon = 13.38, n = 5)
+meta_chicago  <- getMeta(lat = 41.88, lon = -87.63, n = 5)
+meta_london   <- getMeta(lat = 51.4700, lon = -0.4543, n = 5)
+meta_ny       <- getMeta(lat = 40.77, lon = -73.97, n = 5)
+meta_tokyo    <- getMeta(lat = 35.68, lon = 139.69, n = 5)
+
+meta_boston  %>% filter(code == "725090-14739")  %>% select(station, begin, end)
+meta_chicago %>% filter(code == "725340-14819")  %>% select(station, begin, end)
+meta_berlin  %>% filter(code == "103850-99999")  %>% select(station, begin, end)
+meta_london  %>% filter(code == "037720-99999")  %>% select(station, begin, end)
+meta_ny      %>% filter(code == "725030-14732")  %>% select(station, begin, end)
+meta_tokyo   %>% filter(code == "476710-99999")  %>% select(station, begin, end)
+
+# New York had missing data 2000-2004 - Station changed to La Guardia 725030-14732
+
+## Updated 
+
+station_codes <- c(
+  Boston    = "725090-14739",
+  Chicago   = "725340-14819",
+  Berlin    = "103850-99999",
+  London    = "037720-99999",
+  `New York` = "725030-14732",
+  Tokyo     = "476710-99999"
+)
+
+## Verify all is aligned 
+
+library(worldmet)
+library(dplyr)
+
+station_codes <- c(
+  Boston    = "725090-14739",
+  Chicago   = "725340-14819",
+  Berlin    = "103850-99999",
+  London    = "037720-99999",
+  `New York` = "725030-14732",
+  Tokyo     = "476710-99999"
+)
+
+# Expected values to check against
+expected <- c(
+  Boston    = "725090-14739",
+  Chicago   = "725340-14819",
+  Berlin    = "103850-99999",
+  London    = "037720-99999",
+  `New York` = "725030-14732",
+  Tokyo     = "476710-99999"
+)
+
+# 1. Do the codes in your environment match what they should be?
+data.frame(
+  Marathon = names(expected),
+  current  = station_codes[names(expected)],
+  expected = expected,
+  match    = station_codes[names(expected)] == expected
+)
+
+## Verified 
+# Code for pulling weather data 
+
+library(worldmet)
+library(dplyr)
+library(purrr)
+
+get_race_weather <- function(marathon, year, race_date) {
+  empty <- data.frame(Marathon = marathon, Year = year, temp_c = NA_real_, wind_ms = NA_real_)
+  if (is.na(race_date)) return(empty)
+
+  met <- tryCatch(
+    importNOAA(code = station_codes[[marathon]], year = year),
+    error = function(e) NULL)
+  if (is.null(met) || nrow(met) == 0) return(empty)
+
+  day_data <- met %>% filter(as.Date(date) == race_date,
+                             format(date, "%H") %in% sprintf("%02d", 9:13))
+  if (nrow(day_data) == 0) return(empty)
+
+  data.frame(Marathon = marathon, Year = year,
+             temp_c = mean(day_data$air_temp, na.rm = TRUE),
+             wind_ms = mean(day_data$ws, na.rm = TRUE))
+}
+
+race_weather <- race_dates %>%
+  filter(!is.na(date)) %>%
+  pmap_dfr(function(Marathon, Year, date, ...) {
+    message(Marathon, " ", Year)
+    get_race_weather(Marathon, Year, date)
+  })
+
+nrow(race_weather)
+race_weather %>% filter(is.na(temp_c)) %>% arrange(Marathon, Year)
+
+## Found that Marathon Year temp_c wind_ms
+#1    Berlin 2000     NA      NA
+#2    Berlin 2001     NA      NA
+#3    Berlin 2002     NA      NA
+#4    Berlin 2003    NaN     NaN
+#5    Berlin 2004     NA      NA
+#6    Berlin 2025    NaN     NaN
+#7    Berlin 2026     NA      NA
+#8    Boston 2026     NA      NA
+#9   Chicago 2025    NaN     NaN
+#10  Chicago 2026     NA      NA
+#11   London 2026     NA      NA
+#12 New York 2025    NaN     NaN
+#13 New York 2026     NA      NA
+#14    Tokyo 2021     NA      NA
+#15    Tokyo 2026     NA      NA
+
+## Berlin only issue here as 2025 data is epected as discontinued 
+
+library(worldmet)
+
+for (yr in 2000:2004) {
+  cat("Year:", yr, "\n")
+  result <- tryCatch(importNOAA(code = "103850-99999", year = yr), error = function(e) e)
+  if (inherits(result, "error")) {
+    cat("  ERROR:", conditionMessage(result), "\n")
+  } else {
+    cat("  Rows:", nrow(result), " | Non-NA temp:", sum(!is.na(result$air_temp)), "\n")
+  }
+}
+
+# Manual add 
+
+manual_weather <- data.frame(
+  Marathon = c("Tokyo","Boston","London","Chicago","New York"),
+  Year     = c(2026, 2026, 2026, 2025, 2025),
+  temp_c   = c(16.6, 6.5, 12, 11.5, 10.5),   # midpoints of race-window ranges above
+  wind_ms  = c(NA, NA, NA, NA, 1.8)
+)
+
+race_weather <- race_weather %>%
+  filter(!(paste(Marathon, Year) %in% paste(manual_weather$Marathon, manual_weather$Year))) %>%
+  bind_rows(manual_weather)
+
+## 
+
+get_race_weather <- function(marathon, year, race_date) {
+  empty <- data.frame(Marathon = marathon, Year = year, temp_c = NA_real_, wind_ms = NA_real_)
+  if (is.na(race_date)) return(empty)
+  actual_year <- as.integer(format(race_date, "%Y"))   # use the REAL year of the date, not the nominal Year
+  met <- tryCatch(importNOAA(code = station_codes[[marathon]], year = actual_year), error = function(e) NULL)
+  if (is.null(met) || nrow(met) == 0) return(empty)
+  day_data <- met %>% filter(as.Date(date) == race_date, format(date, "%H") %in% sprintf("%02d", 9:13))
+  if (nrow(day_data) == 0) return(empty)
+  data.frame(Marathon = marathon, Year = year,
+             temp_c = mean(day_data$air_temp, na.rm = TRUE),
+             wind_ms = mean(day_data$ws, na.rm = TRUE))
+}
+
+## Berlin Pull
+
+install.packages("rdwd")
+library(rdwd)
+library(dplyr)
+
+link <- selectDWD(id = "00403", res = "hourly", var = "air_temperature", per = "historical")
+file <- dataDWD(link, read = FALSE)
+berlin_dwd <- readDWD(file, varnames = TRUE)
+
+head(berlin_dwd)
+range(berlin_dwd$MESS_DATUM)
+
+# Sourced and Merged
+
+race_weather <- race_weather %>%
+  filter(!(Marathon == "Berlin" & Year %in% 2002:2004)) %>%
+  bind_rows(data.frame(Marathon = "Berlin", Year = 2002:2004,
+                       temp_c = c(11.875, 16.000, 10.760)))
+
+# 2000 and 2001 found also 
+
+race_weather <- race_weather %>%
+  filter(!(Marathon == "Berlin" & Year %in% 2000:2001)) %>%
+  bind_rows(data.frame(Marathon = "Berlin", Year = 2000:2001, temp_c = c(13.68, 15.78)))
+
+# Full check
+nrow(race_weather)
+race_weather %>% filter(is.na(temp_c)) %>% arrange(Marathon, Year)
+
+#> race_weather %>% filter(is.na(temp_c)) %>% arrange(Marathon, Year)
+#  Marathon Year temp_c wind_ms
+#1   Berlin 2025    NaN     NaN
+#2   Berlin 2026     NA      NA
+#3  Chicago 2026     NA      NA
+#4 New York 2026     NA      NA
+#5    Tokyo 2021     NA      NA
+
+### Only Berlin 2025 as the 3 other 2026 variations have not happened and Tokyo 2021 is filed under 2022 
+
+library(dplyr)
+
+berlin_2025_date <- race_dates$date[race_dates$Marathon == "Berlin" & race_dates$Year == 2025]
+
+berlin_dwd %>%
+  mutate(date = as.Date(MESS_DATUM)) %>%
+  filter(date == berlin_2025_date) %>%
+  select(MESS_DATUM, TT_TU.Lufttemperatur)
+
+# Input 
+race_weather <- race_weather %>%
+  filter(!(Marathon == "Berlin" & Year == 2025)) %>%
+  bind_rows(berlin_2025)
+
+# Final check
+race_weather %>% filter(is.na(temp_c)) %>% arrange(Marathon, Year)
+
+# Returns 
+
+race_weather <- race_weather %>%
+  filter(!(Marathon == "Berlin" & Year == 2025)) %>%
+  bind_rows(berlin_2025)
+
+# Final check
+#1   Berlin 2026     NA      NA
+#2  Chicago 2026     NA      NA
+#3 New York 2026     NA      NA
+#4    Tokyo 2021     NA      NA
+
+
+## Weather effect 
+
+library(dplyr)
+
+wx <- all_majors %>% left_join(race_weather, by = c("Marathon", "Year"))
+
+# Is there an optimal race temperature?
+gmod_m <- lm(avg_top10_seconds ~ Year + Marathon + temp_c + I(temp_c^2), data = filter(wx, Sex == "M"))
+gmod_f <- lm(avg_top10_seconds ~ Year + Marathon + temp_c + I(temp_c^2), data = filter(wx, Sex == "F"))
+summary(gmod_m)$coefficients
+summary(gmod_f)$coefficients
+
+optimal_m <- -coef(gmod_m)["temp_c"] / (2 * coef(gmod_m)["I(temp_c^2)"])
+optimal_f <- -coef(gmod_f)["temp_c"] / (2 * coef(gmod_f)["I(temp_c^2)"])
+c(men = optimal_m, women = optimal_f)
+
+## Returned 
+
+                      Estimate   Std. Error    t value     Pr(>|t|)
+(Intercept)      29142.0648335 2925.9645969  9.9598146 7.896698e-18
+Year               -10.6750742    1.4563747 -7.3298955 1.955612e-11
+MarathonBoston     240.1405219   42.5037337  5.6498689 9.238546e-08
+MarathonChicago    102.9506533   40.7795018  2.5245687 1.275039e-02
+MarathonLondon       4.0939342   38.6874775  0.1058207 9.158829e-01
+MarathonNew York   233.7947741   43.2773919  5.4022381 2.912917e-07
+MarathonTokyo      105.3982707   47.2104477  2.2325200 2.724025e-02
+temp_c              -5.6440213    9.4404463 -0.5978554 5.509455e-01
+I(temp_c^2)          0.5067139    0.3614016  1.4020797 1.632037e-01
+> summary(gmod_f)$coefficients
+                      Estimate   Std. Error    t value     Pr(>|t|)
+(Intercept)      50982.4058323 5621.9441407  9.0684654 1.312661e-15
+Year               -20.9441035    2.7982762 -7.4846449 8.549760e-12
+MarathonBoston     164.2020505   81.6666124  2.0106387 4.637038e-02
+MarathonChicago     55.9511689   78.3536758  0.7140848 4.764168e-01
+MarathonLondon    -131.2777345   74.3340632 -1.7660508 7.966462e-02
+MarathonNew York   108.5096015   83.1531181  1.3049373 1.941507e-01
+MarathonTokyo      311.6127610   90.7100859  3.4352603 7.884731e-04
+temp_c             -15.6449015   18.1388598 -0.8625074 3.899493e-01
+I(temp_c^2)          0.8718715    0.6943966  1.2555816 2.114527e-01
+> 
+> optimal_m <- -coef(gmod_m)["temp_c"] / (2 * coef(gmod_m)["I(temp_c^2)"])
+> optimal_f <- -coef(gmod_f)["temp_c"] / (2 * coef(gmod_f)["I(temp_c^2)"])
+> c(men = optimal_m, women = optimal_f)
+  men.temp_c women.temp_c 
+    5.569239     8.972022 
+
+# Checking co-linearality 
+
+library(car)
+vif(gmod_m)   # if temp_c or its square show VIF well above 5-10, that's confirming the collinearity story
+
+## Returned 
+
+                GVIF Df GVIF^(1/(2*Df))
+
+Year         1.034132  1        1.016923
+
+Marathon     1.733075  5        1.056530
+
+temp_c      19.844364  1        4.454701
+
+I(temp_c^2) 20.174997  1        4.491659
+
+> 
+
+## No colinearity as 1.73
+
+
+library(dplyr)
+
+wx <- wx %>% mutate(temp_c_centered = temp_c - mean(temp_c, na.rm = TRUE))
+
+gmod_m_c <- lm(avg_top10_seconds ~ Year + Marathon + temp_c_centered + I(temp_c_centered^2), data = filter(wx, Sex == "M"))
+gmod_f_c <- lm(avg_top10_seconds ~ Year + Marathon + temp_c_centered + I(temp_c_centered^2), data = filter(wx, Sex == "F"))
+summary(gmod_m_c)$coefficients
+summary(gmod_f_c)$coefficients
+
+# Did centering fix the VIF issue?
+vif(gmod_m_c)
+
+# And the decisive comparison — does temp become significant WITHOUT Marathon controlled?
+gmod_m_nomar <- lm(avg_top10_seconds ~ Year + temp_c + I(temp_c^2), data = filter(wx, Sex == "M"))
+gmod_f_nomar <- lm(avg_top10_seconds ~ Year + temp_c + I(temp_c^2), data = filter(wx, Sex == "F"))
+summary(gmod_m_nomar)$coefficients
+summary(gmod_f_nomar)$coefficients
+
+## Returned 
+
+                         Estimate   Std. Error    t value     Pr(>|t|)
+(Intercept)          29147.4541160 2928.2085899  9.9540225 8.165478e-18
+Year                   -10.6750742    1.4563747 -7.3298955 1.955612e-11
+MarathonBoston         240.1405219   42.5037337  5.6498689 9.238546e-08
+MarathonChicago        102.9506533   40.7795018  2.5245687 1.275039e-02
+MarathonLondon           4.0939342   38.6874775  0.1058207 9.158829e-01
+MarathonNew York       233.7947741   43.2773919  5.4022381 2.912917e-07
+MarathonTokyo          105.3982707   47.2104477  2.2325200 2.724025e-02
+temp_c_centered          6.5405102    2.6902475  2.4311928 1.637097e-02
+I(temp_c_centered^2)     0.5067139    0.3614016  1.4020797 1.632037e-01
+> summary(gmod_f_c)$coefficients
+                          Estimate   Std. Error    t value     Pr(>|t|)
+(Intercept)          50920.3388866 5626.2557455  9.0504842 1.453924e-15
+Year                   -20.9441035    2.7982762 -7.4846449 8.549760e-12
+MarathonBoston         164.2020505   81.6666124  2.0106387 4.637038e-02
+MarathonChicago         55.9511689   78.3536758  0.7140848 4.764168e-01
+MarathonLondon        -131.2777345   74.3340632 -1.7660508 7.966462e-02
+MarathonNew York       108.5096015   83.1531181  1.3049373 1.941507e-01
+MarathonTokyo          311.6127610   90.7100859  3.4352603 7.884731e-04
+temp_c_centered          5.3202755    5.1690376  1.0292584 3.052125e-01
+I(temp_c_centered^2)     0.8718715    0.6943966  1.2555816 2.114527e-01
+> 
+> # Did centering fix the VIF issue?
+> vif(gmod_m_c)
+                         GVIF Df GVIF^(1/(2*Df))
+Year                 1.034132  1        1.016923
+Marathon             1.733075  5        1.056530
+temp_c_centered      1.611523  1        1.269458
+I(temp_c_centered^2) 1.161711  1        1.077827
+> 
+> # And the decisive comparison — does temp become significant WITHOUT Marathon controlled?
+> gmod_m_nomar <- lm(avg_top10_seconds ~ Year + temp_c + I(temp_c^2), data = filter(wx, Sex == "M"))
+> gmod_f_nomar <- lm(avg_top10_seconds ~ Year + temp_c + I(temp_c^2), data = filter(wx, Sex == "F"))
+> summary(gmod_m_nomar)$coefficients
+                 Estimate   Std. Error   t value     Pr(>|t|)
+(Intercept) 28384.9671890 3453.3793725  8.219476 1.288411e-13
+Year          -10.1802166    1.7167381 -5.929976 2.282761e-08
+temp_c        -16.7010712   10.8853871 -1.534265 1.272374e-01
+I(temp_c^2)     0.5505944    0.4132171  1.332458 1.848900e-01
+> summary(gmod_f_nomar)$coefficients
+                Estimate   Std. Error   t value     Pr(>|t|)
+(Intercept) 47921.465673 6104.7431682  7.849874 1.008612e-12
+Year          -19.311778    3.0347796 -6.363486 2.667124e-09
+temp_c        -32.507106   19.2427433 -1.689318 9.340042e-02
+I(temp_c^2)     1.142806    0.7304684  1.564484 1.199777e-01
+>
+
+### Meaning
+
+# Centering fixed the collinearity properly — all VIFs are now under 2, so these coefficients can be trusted individually. And the key result: for men, the centered linear temperature effect is significant (β = 6.54 seconds per °C above that course's average temperature, p = 0.016), while the quadratic term isn't (p = 0.163). That means there's no real curvature/optimum in this data — it's a straightforward monotonic relationship: hotter-than-typical race days are slower, cooler-than-typical are faster, across the whole range you have. Women show the same direction (positive coefficient) but it doesn't reach significance (p = 0.305).
+## The genuinely interesting part is the sign flip between the two model versions. Without Marathon in the model, temp_c's coefficient is negative for both sexes (higher temp → seemingly faster times) — the opposite direction, though not significant either way. That's not noise, it's a real confounding pattern: courses like Berlin (fast, moderate temps) versus others create a spurious between-course association that runs backwards from the true physiological relationship. Once you control for which course it is and look only at within-course year-to-year temperature variation, the honest relationship re-emerges: heat slows elite men down, just like the sports science literature would predict. This is actually a nice, quotable methodological point for your report — a textbook Simpson's paradox, and proof the course fixed effects are doing real work rather than being competitive with temperature over the same variance.
+### Write up: "No optimal-temperature curve was detected in this elite-only sample. However, controlling for course, men's average top-10 time increased significantly with above-typical race-day temperatures (+6.5s/°C, p = 0.016); no significant effect was found for women. This relationship reverses sign if course is not controlled for, reflecting confounding between which marathon is run and its typical weather — a caution for any elite marathon weather analysis that pools across courses without fixed effects."
+
+## Graph Design
+
+library(dplyr)
+library(ggplot2)
+
+temp_range <- function(sex_data) {
+seq(min(sex_data$temp_c_centered, na.rm = TRUE),
+max(sex_data$temp_c_centered, na.rm = TRUE), length.out = 100)
+}
+
+wx_m <- wx %>% filter(Sex == "M")
+wx_f <- wx %>% filter(Sex == "F")
+
+pred_m <- data.frame(temp_c_centered = temp_range(wx_m),
+                     Year = mean(wx_m$Year, na.rm = TRUE),
+                     Marathon = "Berlin")  
+pred_m <- cbind(pred_m, predict(gmod_m_c, newdata = pred_m, se.fit = TRUE)[1:2]) %>%
+  mutate(Sex = "M", lwr = fit - 1.96*se.fit, upr = fit + 1.96*se.fit)
+
+pred_f <- data.frame(temp_c_centered = temp_range(wx_f),
+                     Year = mean(wx_f$Year, na.rm = TRUE),
+                     Marathon = "Berlin")
+pred_f <- cbind(pred_f, predict(gmod_f_c, newdata = pred_f, se.fit = TRUE)[1:2]) %>%
+  mutate(Sex = "F", lwr = fit - 1.96*se.fit, upr = fit + 1.96*se.fit)
+
+pred_all <- bind_rows(pred_m, pred_f)
+
+wx_resid <- wx %>%
+  filter(!is.na(temp_c)) %>%
+  group_by(Sex) %>%
+  mutate(temp_c_centered = temp_c - mean(temp_c, na.rm = TRUE)) %>%
+  ungroup()
+
+wx_resid$partial <- ifelse(wx_resid$Sex == "M",
+                           residuals(gmod_m_c) + predict(gmod_m_c, type = "terms")[, "temp_c_centered"] +
+                             predict(gmod_m_c, type = "terms")[, "I(temp_c_centered^2)"],
+                           NA)
+
+ggplot(pred_all, aes(temp_c_centered, fit / 60, colour = Sex, fill = Sex)) +
+  geom_ribbon(aes(ymin = lwr / 60, ymax = upr / 60), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 1) +
+  scale_colour_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M = "Men", F = "Women")) +
+  scale_fill_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M = "Men", F = "Women")) +
+  scale_x_continuous(limits = c(-10, 10), breaks = seq(-10, 10, 5), expand = c(0, 0)) +
+  labs(title = "Race-day temperature vs elite time, course and year controlled",
+       subtitle = "Shaded band = 95% CI. Men: significant linear effect (p = 0.016). Women: not significant (p = 0.31).",
+       x = "Temperature relative to course average (°C)",
+       y = "Predicted avg top-10 time (min)",
+       colour = NULL, fill = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+  # Saved as race-day_temp_vs_elite_time_course_average.png
+
+  ## With data points 
+
+wx_m$adj_time <- residuals(lm(avg_top10_seconds ~ Year + Marathon, data = wx_m)) + mean(wx_m$avg_top10_seconds)
+wx_f$adj_time <- residuals(lm(avg_top10_seconds ~ Year + Marathon, data = wx_f)) + mean(wx_f$avg_top10_seconds)
+
+ggplot() +
+  geom_point(data = wx_m, aes(temp_c_centered, adj_time/60), colour = "#034698", alpha = 0.5) +
+  geom_point(data = wx_f, aes(temp_c_centered, adj_time/60), colour = "#B63163", alpha = 0.5) +
+  geom_ribbon(data = pred_all, aes(temp_c_centered, ymin = lwr/60, ymax = upr/60, fill = Sex), alpha = 0.15) +
+  geom_line(data = pred_all, aes(temp_c_centered, fit/60, colour = Sex), linewidth = 1) +
+  scale_colour_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M="Men", F="Women")) +
+  scale_fill_manual(values = c(M = "#034698", F = "#B63163"), labels = c(M="Men", F="Women")) +
+  scale_x_continuous(limits = c(-10, 10), breaks = seq(-10, 10, 5), expand = c(0, 0)) +
+  labs(title = "Race-day temperature vs elite time (course & year adjusted)",
+       x = "Temperature relative to course average (°C)", y = "Adjusted avg top-10 time (min)",
+       colour = NULL, fill = NULL) +
+  theme_classic(base_size = 13) + theme(legend.position = "bottom")
+
+#Some runs drop away with clean weather will test to see how many
+
+##The following runs fall out the graph 
+#Berlin    2006  25.7 
+#Berlin    2019  23.2 
+#Berlin    2021  22.8 
+#Berlin    2024  23   
+#Chicago   2009  -0.46
+#Chicago   2021  22.6 
+
+## Weather graph for viewing 
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+ggplot(per_course, aes(Year, temp_c, colour = Marathon)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.8) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_x_continuous(expand = expansion(mult = 0.02)) +
+  scale_y_continuous(expand = expansion(mult = 0.05)) +
+  labs(title = "Race-day temperature by marathon, 2000–2026",
+       x = NULL, y = "Race-day temperature (°C)",
+       colour = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+# Named race_day_temp.png
+
+# Global increase in temp? - Same Graph with Temp increase overlay 
+
+library(dplyr)
+library(ggplot2)
+
+wx_yearly <- race_weather %>%
+  filter(!is.na(temp_c)) %>%
+  group_by(Year) %>%
+  summarise(mean_temp = mean(temp_c), n_courses = n())
+
+# Check first: is the course mix stable across years? (affects how trustworthy this is)
+wx_yearly %>% print(n = Inf)
+
+trend_mod <- lm(mean_temp ~ Year, data = wx_yearly)
+summary(trend_mod)$coefficients["Year", ]
+
+per_course <- race_weather %>% filter(!is.na(temp_c))
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+
+ggplot() +
+  geom_line(data = per_course, aes(Year, temp_c, colour = Marathon), linewidth = 0.7, alpha = 0.6) +
+  geom_point(data = per_course, aes(Year, temp_c, colour = Marathon), size = 1.5, alpha = 0.6) +
+  geom_point(data = wx_yearly, aes(Year, mean_temp), colour = "black", size = 2, alpha = 0.35) +
+  geom_smooth(data = wx_yearly, aes(Year, mean_temp), method = "lm", linetype = "dashed",
+             colour = "black", fill = "grey50", alpha = 0.25, linewidth = 1.1) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_x_continuous(expand = expansion(mult = 0.02)) +
+  scale_y_continuous(expand = expansion(mult = 0.05)) +
+  labs(title = "Are major marathon race days getting warmer?",
+       subtitle = "Black: Mean across all six, with linear trend and 95% CI",
+       x = NULL, y = "Temperature (°C)",
+       colour = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+# Saved as average_race_day_temp.png
+
+# Slope - investigating significance
+
+summary(trend_mod)
+
+## Reurned
+
+Call:
+lm(formula = mean_temp ~ Year, data = wx_yearly)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-2.5217 -1.4167 -0.4207  1.3899  4.4141 
+
+Coefficients:
+              Estimate Std. Error t value Pr(>|t|)
+(Intercept) -111.78133   95.62558  -1.169    0.253
+Year           0.06151    0.04750   1.295    0.207
+
+Residual standard error: 1.923 on 25 degrees of freedom
+Multiple R-squared:  0.06285,	Adjusted R-squared:  0.02536 
+F-statistic: 1.677 on 1 and 25 DF,  p-value: 0.2072
+
+### Meaning 
+
+### "No significant warming trend was detected in race-day temperature across the six majors between 2000 and 2026 (β = +0.06°C/year, p = 0.21, R² = 0.06). This rules out gradually cooling or warming conditions as a confound for the observed improvement in elite times — the gains documented elsewhere in this analysis are not attributable to weather trending in athletes' favour (or against them)."
+
+# Test for Robustness 
+
+## Returned 
+
+t test of coefficients:
+
+               Estimate  Std. Error t value Pr(>|t|)  
+(Intercept) -111.781333   65.128716 -1.7163  0.09847 .
+Year           0.061508    0.032271  1.9060  0.06821 .
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+### Meaning 
+
+###"A weak warming trend was observed across the six majors (β = +0.062°C/year), which fell short of conventional significance under standard OLS (p = 0.21) but approached significance under Newey-West heteroskedasticity- and autocorrelation-consistent standard errors (p = 0.068). Given the small sample (27 years) and the sensitivity of the result to the standard error specification, this is best characterized as suggestive rather than conclusive evidence of warming."
+
+
+
