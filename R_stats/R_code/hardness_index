@@ -1,0 +1,266 @@
+## Two types of index harxness and static 
+
+# --- Static: course-level hardness ---
+course_weather <- race_weather %>%
+  group_by(Marathon) %>%
+  summarise(avg_temp = mean(temp_c, na.rm = TRUE),
+           avg_wind = mean(wind_ms, na.rm = TRUE))
+
+hardness_static <- hill_score %>%
+  left_join(course_weather, by = "Marathon") %>%
+  mutate(temp_dev = abs(avg_temp - 10),   # distance from ~10°C optimum (sports-science consensus)
+         hardness = scale(gain_m)[,1] + scale(abs(net_m))[,1] +
+                    scale(temp_dev)[,1] + scale(avg_wind)[,1]) %>%
+  arrange(desc(hardness))
+
+hardness_static %>% select(Marathon, gain_m, net_m, avg_temp, avg_wind, hardness)
+
+ggplot(hardness_static, aes(reorder(Marathon, hardness), hardness, fill = Marathon)) +
+  geom_col(width = 0.6) +
+  scale_fill_manual(values = marathon_colours) +
+  coord_flip() +
+  labs(title = "Combined course hardness index",
+       subtitle = "Terrain (gain + net swing) + typical conditions (temp deviation from 10°C + wind), z-scored",
+       x = NULL, y = "Hardness index") +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+## Produced 
+
+Marathon gain_m net_m  avg_temp avg_wind   hardness
+1   Boston    248  -137  9.432296 4.801897  3.0944450
+2   London    127   -34 13.704334 4.543260  0.5215178
+3    Tokyo     60   -38 10.422275 5.732748  0.1662028
+4   Berlin     73    -6 17.699000 3.706842 -0.2601535
+5 New York    246    -5  9.541111 4.124306 -0.3334693
+6  Chicago     57     0 10.959200 3.430625 -3.1885427
+
+### as well as graph saved as combined_hardness_index(CHI).png
+
+### Meaning Boston heaviliy distorts data - will adjust score to reduce Bostons effect 
+
+# New code 
+
+library(dplyr)
+
+hardness_v3 <- hill_score %>%
+  left_join(course_weather, by = "Marathon") %>%
+  mutate(temp_dev = abs(avg_temp - 10),
+        rank_net = rank(abs(net_m)),
+        hardness = scale(gain_m)[,1] + scale(rank_net)[,1] +
+                   scale(temp_dev)[,1] + scale(avg_wind)[,1]) %>%
+  arrange(desc(hardness))
+
+hardness_v3
+
+### producing new graph saved as CHI_2.png
+
+ Marathon gain_m net_m hill_score_z  avg_temp avg_wind  temp_dev
+1   Boston    248  -137    3.1912791  9.432296 4.801897 0.5677037
+2    Tokyo     60   -38   -0.8072698 10.422275 5.732748 0.4222751
+3   London    127   -34   -0.1420917 13.704334 4.543260 3.7043342
+4   Berlin     73    -6   -1.2821741 17.699000 3.706842 7.6990000
+5 New York    246    -5    0.6158152  9.541111 4.124306 0.4588889
+6  Chicago     57     0   -1.5755587 10.959200 3.430625 0.9592000
+  rank_net    hardness
+1        6  2.48998665
+2        5  0.94219563
+3        4  0.84036084
+4        3  0.06577576
+5        2 -0.52271941
+6        1 -3.81559947
+
+### Meaning
+
+# Combined course hardness index. To capture overall course difficulty beyond any single factor, a composite hardness index was built from four z-scored components: total elevation gain, the rank of net elevation change (used in place of a raw z-score, since Boston's exceptionally large net downhill would otherwise dominate the index — see methodology note above), deviation from a 10°C reference temperature, and average wind speed. Boston emerges as the clearly hardest course (hardness = 2.49), consistent with its combination of substantial climbing, an extreme net elevation drop, and moderate wind. Tokyo and London follow as moderately hard, driven respectively by wind exposure and a comparatively large temperature deviation. Chicago is the clearly easiest course (hardness = -3.82), sitting near the mild end on every component simultaneously — flat, calm, temperate, and with minimal net elevation change — which the additive scoring method compounds into an especially low combined score. This is a property of summed composite indices worth noting: a course that is consistently mild across several dimensions can score more extreme overall than one that is extreme on a single dimension alone.
+
+## Now time for Dynamic CHI 
+
+library(dplyr)
+library(ggplot2)
+library(sandwich)
+library(lmtest)
+
+marathon_colours <- c(Berlin = "#F8766D", Boston = "#B79F00", Chicago = "#00BA38",
+                      London = "#00BFC4", `New York` = "#619CFF", Tokyo = "#F564E3")
+fmt_hm <- function(x) sprintf("%d:%02d", x %/% 60, round(x %% 60))
+
+# --- Build: race-level hardness, corrected (rank-based net elevation) ---
+race_hardness <- all_majors %>%
+  left_join(hill_score, by = "Marathon") %>%
+  left_join(race_weather, by = c("Marathon", "Year")) %>%
+  filter(!is.na(temp_c), !is.na(wind_ms)) %>%
+  mutate(temp_dev = abs(temp_c - 10),
+        rank_net = rank(abs(net_m)),
+        hardness = scale(gain_m)[,1] + scale(rank_net)[,1] +
+                   scale(temp_dev)[,1] + scale(wind_ms)[,1])
+
+# --- Stats: hardness vs time, no pacemaker control ---
+for (s in c("M", "F")) {
+  mod <- lm(avg_top10_seconds ~ Year + hardness, data = filter(race_hardness, Sex == s))
+  cat("\n---", s, "---\n")
+  print(coeftest(mod, vcov = vcovCL, cluster = ~Marathon)["hardness", ])
+}
+
+# --- Graph: hardness vs time ---
+ggplot(race_hardness, aes(hardness, avg_top10_seconds / 60)) +
+  geom_point(aes(colour = Marathon), alpha = 0.6, size = 2) +
+  geom_smooth(aes(linetype = Sex), method = "lm", se = TRUE,
+             colour = "black", fill = "grey50", alpha = 0.15, linewidth = 0.8) +
+  facet_wrap(~Sex, scales = "free_y", labeller = as_labeller(c(M = "Men", F = "Women"))) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_linetype_manual(values = c(M = "dashed", F = "dashed"), guide = "none") +
+  scale_x_continuous(expand = expansion(mult = 0.05)) +
+  scale_y_continuous(labels = fmt_hm, expand = expansion(mult = 0.05)) +
+  labs(title = "Combined course hardness index vs elite finish time",
+       subtitle = "Hardness = terrain + that year's conditions | Black dashed: linear fit with 95% CI",
+       x = "Combined course hardness index(z-scored components)", y = "Avg top-10 time (h:mm)",
+       colour = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+# --- Bonus: the ten hardest race editions ever staged ---
+race_hardness %>%
+  filter(Sex == "M") %>%
+  arrange(desc(hardness)) %>%
+  select(Marathon, Year, temp_c, wind_ms, hardness) %>%
+  head(10)
+  head(10)
+
+## Produced 
+
+--- M ---
+   Estimate  Std. Error     t value    Pr(>|t|) 
+21.81669941 12.39253414  1.76047120  0.08066168 
+
+--- F ---
+   Estimate  Std. Error     t value    Pr(>|t|) 
+23.49205441 13.14405921  1.78727546  0.07620528 
+
+## As well as producing graph dynamic_CHI
+
+### Meaning 
+# "Course hardness — combining elevation gain, net elevation change (rank-transformed), temperature deviation from 10°C, and wind speed — showed a positive association with elite finish times for both sexes, each additional unit of hardness costing approximately 22 seconds for men (p = 0.081) and 23 seconds for women (p = 0.076). Both fell just short of conventional significance but were remarkably consistent in magnitude and direction across sexes, suggesting a real, modest effect that this dataset — six courses, twenty-six years — is underpowered to confirm decisively. This specification does not separate the effect of physical course hardness from correlated course-level factors such as pacemaker use; it should be read as the total course-level effect of hardness on performance, not an isolated physiological effect."
+
+## Hardest ever
+ Marathon  Year temp_c wind_ms hardness
+   <chr>    <dbl>  <dbl>   <dbl>    <dbl>
+ 1 Boston    2018   3.61   11.2      6.26
+ 2 Boston    2007   8.31   14.3      6.18
+ 3 Boston    2017  19.4     5.66     4.76
+ 4 Boston    2000   6.08    7.77     4.02
+ 5 Boston    2021  17.5     4.55     3.70
+ 6 Boston    2011   7.71    7.98     3.63
+ 7 Berlin    2006  25.7     6.84     3.36
+ 8 Boston    2015   5.59    5.74     3.30
+ 9 Boston    2012  18.8     2.4      3.19
+10 Boston    2005  14.9     5        3.12
+
+## Meaning 
+## "The ten hardest race editions in the dataset are dominated by Boston (8 of 10), reflecting both its structurally difficult course and its unusually high year-to-year weather variance — including both the coldest, wettest editions (2018) and unusually warm ones (2017, 2021)."
+
+### Rest of the index 
+
+# A tibble: 10 × 5
+   Marathon  Year temp_c wind_ms hardness
+   <chr>    <dbl>  <dbl>   <dbl>    <dbl>
+ 1 Boston    2018   3.61   11.2      6.26
+ 2 Boston    2007   8.31   14.3      6.18
+ 3 Boston    2017  19.4     5.66     4.76
+ 4 Boston    2000   6.08    7.77     4.02
+ 5 Boston    2021  17.5     4.55     3.70
+ 6 Boston    2011   7.71    7.98     3.63
+ 7 Berlin    2006  25.7     6.84     3.36
+ 8 Boston    2015   5.59    5.74     3.30
+ 9 Boston    2012  18.8     2.4      3.19
+10 Boston    2005  14.9     5        3.12
+> 
+> # Ten easiest/most favourable editions, for contrast — men
+> race_hardness %>%
++     filter(Sex == "M") %>%
++     arrange(hardness) %>%
++     select(Marathon, Year, temp_c, wind_ms, hardness) %>%
++     head(10)
+# A tibble: 10 × 5
+   Marathon  Year temp_c wind_ms hardness
+   <chr>    <dbl>  <dbl>   <dbl>    <dbl>
+ 1 Chicago   2004   9.56    1.09    -5.06
+ 2 Chicago   2013   9.42    1.84    -4.70
+ 3 Chicago   2006  11.2     2.33    -4.31
+ 4 Chicago   2016  10.8     2.63    -4.29
+ 5 Chicago   2005  10.4     3       -4.24
+ 6 Chicago   2003  10.5     3.72    -3.91
+ 7 Chicago   2018   5.56    1.02    -3.90
+ 8 Chicago   2011  15.3     0.45    -3.89
+ 9 Chicago   2023   8.44    3.35    -3.75
+10 Chicago   2007  13.3     2.59    -3.57
+> 
+> # Ten easiest, women
+> race_hardness %>%
++     filter(Sex == "F") %>%
++     arrange(hardness) %>%
++     select(Marathon, Year, temp_c, wind_ms, hardness) %>%
++     head(10)
+# A tibble: 10 × 5
+   Marathon  Year temp_c wind_ms hardness
+   <chr>    <dbl>  <dbl>   <dbl>    <dbl>
+ 1 Chicago   2004   9.56    1.09    -5.06
+ 2 Chicago   2013   9.42    1.84    -4.70
+ 3 Chicago   2006  11.2     2.33    -4.31
+ 4 Chicago   2016  10.8     2.63    -4.29
+ 5 Chicago   2005  10.4     3       -4.24
+ 6 Chicago   2003  10.5     3.72    -3.91
+ 7 Chicago   2018   5.56    1.02    -3.90
+ 8 Chicago   2011  15.3     0.45    -3.89
+ 9 Chicago   2023   8.44    3.35    -3.75
+10 Chicago   2007  13.3     2.59    -3.57
+
+## Report 
+
+"The dataset's hardest and easiest race editions cluster almost entirely by course rather than by year: Boston accounts for 8 of the 10 hardest editions (driven by both extreme cold, as in 2018's 3.6°C with 11.2 m/s wind, and unusual heat, as in 2017 and 2021), while Chicago occupies all 10 of the easiest, most notably 2004 — near-ideal conditions of 9.6°C and just 1.1 m/s wind on the flattest course in the sample. This course-level clustering, rather than any clear trend over time, reinforces that structural course characteristics dominate year-to-year weather variation in determining overall race difficulty."
+
+# Finish time instead of TOP 10 
+
+library(dplyr)
+library(ggplot2)
+library(sandwich)
+library(lmtest)
+
+# --- Stats: hardness vs winning time ---
+for (s in c("M", "F")) {
+  mod <- lm(winning_seconds ~ Year + hardness, data = filter(race_hardness, Sex == s))
+  cat("\n---", s, "---\n")
+  print(coeftest(mod, vcov = vcovCL, cluster = ~Marathon)["hardness", ])
+}
+
+# --- Graph: hardness vs winning time ---
+ggplot(race_hardness, aes(hardness, winning_seconds / 60)) +
+  geom_point(aes(colour = Marathon), alpha = 0.6, size = 2) +
+  geom_smooth(aes(linetype = Sex), method = "lm", se = TRUE,
+             colour = "black", fill = "grey50", alpha = 0.15, linewidth = 0.8) +
+  facet_wrap(~Sex, scales = "free_y", labeller = as_labeller(c(M = "Men", F = "Women"))) +
+  scale_colour_manual(values = marathon_colours) +
+  scale_linetype_manual(values = c(M = "dashed", F = "dashed"), guide = "none") +
+  scale_x_continuous(expand = expansion(mult = 0.05)) +
+  scale_y_continuous(labels = fmt_hm, expand = expansion(mult = 0.05)) +
+  labs(title = "Combined course hardness index vs winning time",
+       subtitle = "Hardness = terrain + that year's conditions | Black dashed: linear fit with 95% CI",
+       x = "Race hardness index (z-scored components)", y = "Winning time (h:mm)",
+       colour = NULL) +
+  theme_classic(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+## Produced 
+
+--- M ---
+   Estimate  Std. Error     t value    Pr(>|t|) 
+26.22895754 13.87912704  1.88981320  0.06099262 
+
+--- F ---
+   Estimate  Std. Error     t value    Pr(>|t|) 
+37.67028462 14.77268077  2.54999652  0.01192376 
+
+## as well as graph dynamic CHI _vs_winning_time (V2)
+
+### Meaning "Combined course hardness showed a stronger relationship with winning time than with the top-10 pack average. For women, hardness was significantly associated with slower winning times (+37.7 seconds per unit, p = 0.012); for men, the effect was similar in direction and comparable in magnitude but fell just short of conventional significance (+26.2 seconds per unit, p = 0.061). This mirrors an earlier finding using elevation alone: harder conditions appear to disproportionately affect whoever is racing to win, rather than uniformly slowing the elite field. Taken together, these results — observed independently with two related hardness measures — suggest that pack depth may buffer top-10 performance against course difficulty in a way that individual winning efforts are not buffered."
+
